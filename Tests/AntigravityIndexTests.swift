@@ -88,6 +88,24 @@ enum AntigravityIndexTests {
                         && AgentAntigravityIndex.project(forTranscript: transcript(first)) == "app",
                      "the index shows rows still in the write-ahead log of a running agy")
 
+        do {
+            let logFile = URL(fileURLWithPath: transcript(first))
+            try FileManager.default.createDirectory(at: logFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let line = #"{"step_index":0,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-10-31T20:05:00Z","input_tokens":100,"output_tokens":20}"# + "\n"
+            try Data(line.utf8).write(to: logFile)
+            let cursor = AgentLogCursor(path: logFile.path, provider: .antigravity)
+            var projects: [String] = []
+            AgentLogReader.readAppended(cursor) { raw in
+                for entry in AntigravityReader().parse(raw, state: &cursor.state, now: Date()) {
+                    if case .usage(_, let record, _) = entry { projects.append(record.project) }
+                }
+            }
+            suite.expect(projects == ["app"],
+                         "a first read through AgentLogReader preserves the indexed workspace name across startOver")
+        } catch {
+            suite.expect(false, "Antigravity cursor read fixture: \(error)")
+        }
+
         suite.expect(AgentAntigravityIndex.project(forTranscript: transcript("33333333-3333-4333-8333-333333333333")) == nil,
                      "a conversation the index does not hold names no project")
         let elsewhere = home.appending(path: "somewhere/\(first)/.system_generated/logs/transcript.jsonl").path

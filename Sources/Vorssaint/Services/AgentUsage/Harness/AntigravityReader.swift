@@ -10,6 +10,14 @@ import Foundation
 struct AntigravityReader: AgentHarnessReader {
     var provider: AgentProvider { .antigravity }
 
+    func initialState(forLog path: String) -> AgentLogState {
+        var state = AgentLogState()
+        if let project = AgentAntigravityIndex.project(forTranscript: path) {
+            state.project = project
+        }
+        return state
+    }
+
     func parse(_ line: Data, state: inout AgentLogState, now: Date) -> [AgentLogEntry] {
         guard let first = line.first(where: { ![9, 10, 13, 32].contains($0) }), first == 0x7B,
               let object = AgentLogObject(line), let type = object.string("type") else { return [] }
