@@ -74,9 +74,10 @@ struct AgentPriceList: Equatable {
     let webSearch: Double
     let usOnlyMultiplier: Double
     let gemini: [Model]
+    let geminiPlans: [Plan]
 
     init(updated: Date, claude: [Model], codex: [Model], claudePlans: [Plan], codexPlans: [Plan],
-         webSearch: Double, usOnlyMultiplier: Double, gemini: [Model] = []) {
+         webSearch: Double, usOnlyMultiplier: Double, gemini: [Model] = [], geminiPlans: [Plan] = []) {
         self.updated = updated
         self.claude = claude
         self.codex = codex
@@ -85,10 +86,11 @@ struct AgentPriceList: Equatable {
         self.webSearch = webSearch
         self.usOnlyMultiplier = usOnlyMultiplier
         self.gemini = gemini
+        self.geminiPlans = geminiPlans
     }
 
     static let empty = AgentPriceList(updated: .distantPast, claude: [], codex: [], claudePlans: [], codexPlans: [],
-                                      webSearch: 0, usOnlyMultiplier: 1, gemini: [])
+                                      webSearch: 0, usOnlyMultiplier: 1, gemini: [], geminiPlans: [])
 
     static func decode(_ data: Data) -> AgentPriceList? {
         guard data.count <= maximumSize,
@@ -102,16 +104,21 @@ struct AgentPriceList: Equatable {
               let webSearch = number(claude["webSearch"], in: 0...1),
               let usOnly = number(claude["usOnlyMultiplier"], in: 1...3) else { return nil }
         let geminiModels: [Model]
+        let geminiPlans: [Plan]
         if json["gemini"] == nil {
             geminiModels = []
+            geminiPlans = []
         } else {
             guard let gemini = json["gemini"] as? [String: Any],
                   let decoded = models(gemini["models"], prefix: "gemini-") else { return nil }
+            let decodedPlans: [Plan]? = gemini["plans"] == nil ? [] : plans(gemini["plans"])
+            guard let decodedPlans else { return nil }
             geminiModels = decoded
+            geminiPlans = decodedPlans
         }
         return AgentPriceList(updated: updated, claude: claudeModels, codex: codexModels,
                               claudePlans: claudePlans, codexPlans: codexPlans, webSearch: webSearch,
-                              usOnlyMultiplier: usOnly, gemini: geminiModels)
+                              usOnlyMultiplier: usOnly, gemini: geminiModels, geminiPlans: geminiPlans)
     }
 
     /// The newer of the list inside the app and the last one downloaded. On
@@ -120,11 +127,14 @@ struct AgentPriceList: Equatable {
         guard let downloaded else { return shipped }
         guard let shipped else { return downloaded }
         guard downloaded.updated >= shipped.updated else { return shipped }
-        if downloaded.gemini.isEmpty && !shipped.gemini.isEmpty {
+        let mergedGemini = downloaded.gemini.isEmpty && !shipped.gemini.isEmpty ? shipped.gemini : downloaded.gemini
+        let mergedGeminiPlans = downloaded.geminiPlans.isEmpty && !shipped.geminiPlans.isEmpty
+            ? shipped.geminiPlans : downloaded.geminiPlans
+        if mergedGemini != downloaded.gemini || mergedGeminiPlans != downloaded.geminiPlans {
             return AgentPriceList(updated: downloaded.updated, claude: downloaded.claude, codex: downloaded.codex,
                                   claudePlans: downloaded.claudePlans, codexPlans: downloaded.codexPlans,
                                   webSearch: downloaded.webSearch, usOnlyMultiplier: downloaded.usOnlyMultiplier,
-                                  gemini: shipped.gemini)
+                                  gemini: mergedGemini, geminiPlans: mergedGeminiPlans)
         }
         return downloaded
     }
@@ -297,9 +307,12 @@ enum AgentPricing {
         return (cost, savings)
     }
 
+    /// Effort suffixes Antigravity CLI appends to model IDs ("gemini-4-carbon-medium").
+    private static let effortSuffixes: Set<String> = ["low", "medium", "high", "xhigh", "max"]
+
     /// Readable model names: "claude-opus-5-5" reads "Opus 5.5" and
     /// "gpt-6-astra" reads "GPT-6 Astra" and "gemini-4-argon-b" reads
-    /// "Gemini 4 Argon B". Built from the name itself, so a model no list
+    /// "Argon 4 B", as Claude drops its own name. Built from the name itself, so a model no list
     /// knows yet still reads well.
     static func displayName(_ model: String) -> String {
         let id = normalized(model)
@@ -312,6 +325,9 @@ enum AgentPricing {
             parts.removeAll { $0.count >= 6 && $0.allSatisfy(\.isNumber) }
             parts.removeAll { $0.hasPrefix("v") && $0.dropFirst().first?.isNumber == true }
             parts.removeAll { $0 == "latest" }
+            if parts.count > 1, let tail = parts.last, effortSuffixes.contains(tail) {
+                parts.removeLast()
+            }
             let words = parts.filter { !$0.allSatisfy({ $0.isNumber || $0 == "." }) }
             let versions = parts.filter { $0.allSatisfy({ $0.isNumber || $0 == "." }) }
             let version = versions.joined(separator: ".")
@@ -339,23 +355,31 @@ enum AgentPricing {
                parts.suffix(2).allSatisfy({ $0.count == 2 && $0.allSatisfy(\.isNumber) }) {
                 parts.removeLast(3)
             }
+            if parts.count > 1, let tail = parts.last, effortSuffixes.contains(tail) {
+                parts.removeLast()
+            }
             guard !parts.isEmpty else { return "Gemini" }
-            var formatted: [String] = []
+            if parts == ["pro", "orchestrator"] { return "Orchestrator" }
+            var words: [String] = []
+            var versions: [String] = []
             var index = 0
             while index < parts.count {
                 let part = parts[index]
                 if part == "flash", index + 1 < parts.count, parts[index + 1] == "lite" {
-                    formatted.append("Flash-Lite")
+                    words.append("Flash-Lite")
                     index += 2
                 } else if part.allSatisfy({ $0.isNumber || $0 == "." }) {
-                    formatted.append(part)
+                    versions.append(part)
                     index += 1
                 } else {
-                    formatted.append(part.capitalized)
+                    words.append(part.capitalized)
                     index += 1
                 }
             }
-            return (["Gemini"] + formatted).joined(separator: " ")
+            let version = versions.joined(separator: ".")
+            let name = [words.first ?? "", version] + words.dropFirst()
+            let joined = name.filter { !$0.isEmpty }.joined(separator: " ")
+            return joined.isEmpty ? "Gemini" : joined
         }
         guard id.hasPrefix("gpt-") else { return id }
         var parts = id.dropFirst(4).split(separator: "-").map(String.init)
@@ -395,5 +419,28 @@ enum AgentPlans {
             return AgentPlan(name: plan.name, monthlyPrice: plan.monthly)
         }
         return AgentPlan(name: raw.prefix(1).uppercased() + raw.dropFirst(), monthlyPrice: nil)
+    }
+
+    static func gemini(planType: String?, list: AgentPriceList = AgentPricing.list) -> AgentPlan? {
+        guard var raw = planType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !raw.isEmpty else { return nil }
+        raw = raw.replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: " ", with: "_")
+        for prefix in ["google_ai_", "google_one_ai_", "google_one_", "google_", "gemini_", "ai_"]
+            where raw.hasPrefix(prefix) {
+            raw.removeFirst(prefix.count)
+            break
+        }
+        guard !raw.isEmpty else { return nil }
+        if let plan = list.geminiPlans.first(where: { $0.match == raw || raw.contains($0.match) }) {
+            return AgentPlan(name: plan.name, monthlyPrice: plan.monthly)
+        }
+        let name = raw.replacingOccurrences(of: "_", with: " ").trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : AgentPlan(name: name.capitalized, monthlyPrice: nil)
+    }
+
+    static func antigravity(configured: String?, detected: String?,
+                            list: AgentPriceList = AgentPricing.list) -> AgentPlan? {
+        let chosen = configured?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return gemini(planType: chosen.isEmpty ? detected : chosen, list: list)
     }
 }

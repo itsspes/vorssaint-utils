@@ -444,10 +444,11 @@ enum AntigravityAgentTests {
                         && AgentPricing.normalized("models/gemini-3.8-flash") == "gemini-3.8-flash",
                      "AgentPricing normalizes Antigravity Model Selection labels and API model prefixes")
 
-        suite.expect(AgentPricing.displayName("gemini-4-argon") == "Gemini 4 Argon"
-                        && AgentPricing.displayName("gemini-3.8-flash") == "Gemini 3.8 Flash"
-                        && AgentPricing.displayName("gemini-3.5-flash-lite") == "Gemini 3.5 Flash-Lite"
-                        && AgentPricing.displayName("gemini-2.5-pro-preview-05-06") == "Gemini 2.5 Pro",
+        suite.expect(AgentPricing.displayName("gemini-4-argon") == "Argon 4"
+                        && AgentPricing.displayName("gemini-3.8-flash") == "Flash 3.8"
+                        && AgentPricing.displayName("gemini-3.5-flash-lite") == "Flash-Lite 3.5"
+                        && AgentPricing.displayName("gemini-2.5-pro-preview-05-06") == "Pro 2.5"
+                        && AgentPricing.displayName("gemini-pro-orchestrator") == "Orchestrator",
                      "AgentPricing formats Gemini family names cleanly without preview suffixes")
 
         let argon = AgentPricing.cost(
@@ -772,6 +773,48 @@ enum AntigravityAgentTests {
             let cancelled = request.run(agyHang, home: folder, environment: ["PATH": "/usr/bin:/bin"], timeout: 15)
             suite.expect(cancelled == .failure(.unreachable) && Date().timeIntervalSince(startedCancel) < 4,
                          "cancelling an active Antigravity quota request terminates the child process promptly")
+
+            // 5) The plan comes only from /usage; the interactive CLI, which
+            // would start the person's MCP servers, is never opened for it.
+            let probeMarker = folder.appending(path: "interactive-started")
+            let agyPlan = try makeScript("agy-plan", """
+            #!/bin/sh
+            if [ "$1" = "--version" ]; then
+              echo "Antigravity CLI 1.5.7"
+              exit 0
+            fi
+            if [ "$1" != "-p" ]; then
+              touch '\(probeMarker.path)'
+              exit 0
+            fi
+            cat <<'EOF'
+            {"status":"SUCCESS","command":{"name":"usage","data":{"plan_tier":"Google AI Ultra","groups":[{"name":"Gemini Models","buckets":[{"window":"5h","remaining_fraction":0.9,"reset_time":"\(futureReset)"}]}]}}}
+            EOF
+            """)
+            let planSummary = try? AgentAntigravityServer.Request().run(
+                agyPlan, home: folder, environment: ["PATH": "/usr/bin:/bin"], timeout: 8).get()
+            suite.expect(planSummary?.planTier == "Google AI Ultra"
+                            && AgentPlans.antigravity(configured: "", detected: planSummary?.planTier)?.name == "Ultra",
+                         "Request.run reads plan_tier from /usage and maps Google AI Ultra to the Ultra badge")
+            let agyNoPlan = try makeScript("agy-no-plan", """
+            #!/bin/sh
+            if [ "$1" = "--version" ]; then
+              echo "Antigravity CLI 1.5.7"
+              exit 0
+            fi
+            if [ "$1" != "-p" ]; then
+              touch '\(probeMarker.path)'
+              exit 0
+            fi
+            cat <<'EOF'
+            {"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"window":"5h","remaining_fraction":0.9,"reset_time":"\(futureReset)"}]}]}}}
+            EOF
+            """)
+            let noPlanSummary = try? AgentAntigravityServer.Request().run(
+                agyNoPlan, home: folder, environment: ["PATH": "/usr/bin:/bin"], timeout: 8).get()
+            suite.expect(noPlanSummary != nil && noPlanSummary?.planTier == nil
+                            && !FileManager.default.fileExists(atPath: probeMarker.path),
+                         "without plan_tier in /usage no plan is guessed and agy is never started interactively")
         } catch {
             suite.expect(false, "Antigravity CLI fixture: \(error)")
         }
@@ -788,5 +831,46 @@ enum AntigravityAgentTests {
         }
         suite.expect(allLocalesValid,
                      "every supported language provides distinct, em-dash-free Antigravity limit strings")
+
+        let planLocalesValid = AppLanguage.allCases.allSatisfy { language in
+            let planText = FeatureStrings.antigravityPlan(language)
+            let items = [planText.plan, planText.automatic, planText.planHint, planText.copyInstall, planText.copied]
+            return items.allSatisfy { !$0.isEmpty && !$0.contains("\u{2014}") }
+        }
+        suite.expect(planLocalesValid,
+                     "every supported language provides em-dash-free Antigravity plan strings")
+
+        // Plan tier extraction from agy JSON payloads & coherent per-group card window pairing.
+        let tierPayload: [String: Any] = [
+            "status": "SUCCESS",
+            "command": ["name": "usage", "data": ["plan_tier": "Google AI Pro", "groups": []]]
+        ]
+        suite.expect(AgentAntigravityServer.planTier(tierPayload) == "Google AI Pro"
+                        && AgentAntigravityServer.planTier(["status": "ERROR", "plan_tier": "Pro"]) == nil,
+                     "AgentAntigravityServer extracts plan_tier only from successful command payloads")
+
+        let zeroGemini5h = AgentLimitWindow(id: "antigravity.gemini-5h.5h", kind: .session, minutes: 300,
+                                            scope: nil, usedPercent: 0, resetsAt: now.addingTimeInterval(3_600))
+        let zeroGeminiWk = AgentLimitWindow(id: "antigravity.gemini-wk.wk", kind: .weekly, minutes: 10_080,
+                                            scope: nil, usedPercent: 0, resetsAt: now.addingTimeInterval(86_400))
+        let zeroClaude5h = AgentLimitWindow(id: "antigravity.3p-5h.5h", kind: .session, minutes: 300,
+                                            scope: "Claude/GPT", usedPercent: 0, resetsAt: now.addingTimeInterval(3_600))
+        let zeroClaudeWk = AgentLimitWindow(id: "antigravity.3p-wk.wk", kind: .weekly, minutes: 10_080,
+                                            scope: "Claude/GPT", usedPercent: 0, resetsAt: now.addingTimeInterval(86_400))
+        let tiedCards = NotchAgentSupport.antigravityCardWindows([zeroClaude5h, zeroClaudeWk, zeroGemini5h, zeroGeminiWk])
+        suite.expect(tiedCards.map(\.id) == ["antigravity.gemini-5h.5h", "antigravity.gemini-wk.wk"],
+                     "tied Antigravity quota pools keep the Gemini session and weekly pair together")
+
+        let mixedGemini5h = AgentLimitWindow(id: "antigravity.gemini-5h.5h", kind: .session, minutes: 300,
+                                             scope: nil, usedPercent: 8, resetsAt: now.addingTimeInterval(3_600))
+        let mixedGeminiWk = AgentLimitWindow(id: "antigravity.gemini-wk.wk", kind: .weekly, minutes: 10_080,
+                                             scope: nil, usedPercent: 49, resetsAt: now.addingTimeInterval(86_400))
+        let mixedClaude5h = AgentLimitWindow(id: "antigravity.3p-5h.5h", kind: .session, minutes: 300,
+                                             scope: "Claude/GPT", usedPercent: 20, resetsAt: now.addingTimeInterval(3_600))
+        let mixedClaudeWk = AgentLimitWindow(id: "antigravity.3p-wk.wk", kind: .weekly, minutes: 10_080,
+                                             scope: "Claude/GPT", usedPercent: 10, resetsAt: now.addingTimeInterval(86_400))
+        let geminiDominant = NotchAgentSupport.antigravityCardWindows([mixedClaude5h, mixedClaudeWk, mixedGemini5h, mixedGeminiWk])
+        suite.expect(geminiDominant.map(\.id) == ["antigravity.gemini-5h.5h", "antigravity.gemini-wk.wk"],
+                     "Antigravity Limits card pairs both rows from the most constrained pool instead of mixing Gemini weekly with Claude/GPT 5h")
     }
 }

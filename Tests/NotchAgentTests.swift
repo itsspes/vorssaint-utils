@@ -173,10 +173,10 @@ enum NotchAgentTests {
                         && AgentPricing.displayName("claude-mythos-preview") == "Mythos Preview"
                         && AgentPricing.displayName("claude-3-5-sonnet-latest") == "Sonnet 3.5"
                         && AgentPricing.displayName("gpt-daybreak-red-latest") == "GPT Daybreak Red"
-                        && AgentPricing.displayName("gemini-4-argon-b") == "Gemini 4 Argon B"
-                        && AgentPricing.displayName("gemini-3.8-flash-lite") == "Gemini 3.8 Flash-Lite"
-                        && AgentPricing.displayName("gemini-4-argon-20261013") == "Gemini 4 Argon"
-                        && AgentPricing.displayName("gemini-2.5-pro-preview-06-05") == "Gemini 2.5 Pro",
+                        && AgentPricing.displayName("gemini-4-argon-b") == "Argon 4 B"
+                        && AgentPricing.displayName("gemini-3.8-flash-lite") == "Flash-Lite 3.8"
+                        && AgentPricing.displayName("gemini-4-argon-20261013") == "Argon 4"
+                        && AgentPricing.displayName("gemini-2.5-pro-preview-06-05") == "Pro 2.5",
                      "model names read the way people say them, without snapshot dates")
         suite.expect(AgentPricing.displayName("gpt-7") == "GPT-7" && AgentPricing.displayName("claude-opus-6") == "Opus 6"
                         && AgentPricing.displayName("gpt-7-codex") == "GPT-7 Codex",
@@ -192,7 +192,24 @@ enum NotchAgentTests {
                         && AgentPlans.codex(planType: "free") == AgentPlan(name: "Free", monthlyPrice: 0)
                         && AgentPlans.codex(planType: "go") == AgentPlan(name: "Go", monthlyPrice: 8)
                         && AgentPlans.claude(organizationType: "claude_ultra", rateLimitTier: "default_claude_ultra")
-                        == AgentPlan(name: "Ultra", monthlyPrice: nil),
+                        == AgentPlan(name: "Ultra", monthlyPrice: nil)
+                        && AgentPlans.gemini(planType: "free") == AgentPlan(name: "Free", monthlyPrice: 0)
+                        && AgentPlans.gemini(planType: "google_ai_plus") == AgentPlan(name: "Plus", monthlyPrice: 4.99)
+                        && AgentPlans.gemini(planType: "Google AI Pro") == AgentPlan(name: "Pro", monthlyPrice: 19.99)
+                        && AgentPlans.gemini(planType: "ultra_5x") == AgentPlan(name: "Ultra 5×", monthlyPrice: 99.99)
+                        && AgentPlans.gemini(planType: "ultra_20x") == AgentPlan(name: "Ultra 20×", monthlyPrice: 199.99)
+                        && AgentPlans.gemini(planType: "google-ai-ultra") == AgentPlan(name: "Ultra", monthlyPrice: nil)
+                        && AgentPlans.gemini(planType: "workspace") == AgentPlan(name: "Workspace", monthlyPrice: nil)
+                        // Code Assist's standard tier is paid, so it never reads as Free.
+                        && AgentPlans.gemini(planType: "standard-tier")?.monthlyPrice == nil
+                        && AgentPlans.antigravity(configured: "plus", detected: "pro") == AgentPlan(name: "Plus", monthlyPrice: 4.99)
+                        && AgentPlans.antigravity(configured: "", detected: "Pro") == AgentPlan(name: "Pro", monthlyPrice: 19.99)
+                        && AgentPricing.price(for: "Gemini 4 Carbon (Medium)")?.input == 2
+                        && AgentPricing.price(for: "gemini-4-carbon-high")?.output == 10
+                        && AgentPricing.price(for: "gemini-4-hydrogen-xhigh")?.input == 1.5
+                        && AgentPricing.displayName("gemini-4-carbon-medium") == "Carbon 4"
+                        && AgentPricing.displayName("gemini-4-hydrogen-xhigh") == "Hydrogen 4"
+                        && AgentPricing.displayName("claude-opus-5-5-medium") == "Opus 5.5",
                      "plans are recognized, and an unknown one keeps its name without a price")
     }
 
@@ -3193,7 +3210,8 @@ enum NotchAgentTests {
                      "alerts follow their switches and a budget must be positive")
 
         let keys = [DefaultsKey.notchAgentsEnabled, DefaultsKey.notchAgentsClaude, DefaultsKey.notchAgentsCodex,
-                    DefaultsKey.notchAgentsOpenCode, DefaultsKey.notchAgentsCopilot, DefaultsKey.notchAgentsAntigravity, DefaultsKey.notchAgentsGemini,
+                    DefaultsKey.notchAgentsOpenCode, DefaultsKey.notchAgentsCopilot, DefaultsKey.notchAgentsAntigravity,
+                    DefaultsKey.notchAgentsAntigravityPlan, DefaultsKey.notchAgentsGemini,
                     DefaultsKey.notchAgentsCardOrder, DefaultsKey.notchAgentsHiddenCards, DefaultsKey.notchAgentsPeriod,
                     DefaultsKey.notchAgentsLimitDisplay, DefaultsKey.notchAgentsLimitFocus, DefaultsKey.notchAgentsLiveActivity, DefaultsKey.notchAgentsReadout,
                     DefaultsKey.notchAgentsFinishAlert, DefaultsKey.notchAgentsFinishMinimum, DefaultsKey.notchAgentsLimitAlert,

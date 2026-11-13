@@ -276,12 +276,10 @@ private struct NotchAgentLimitsCard: View {
     /// Two rows fit: the session and whichever longer window binds first.
     private var windows: [AgentLimitWindow] {
         let all = (limits?.windows ?? []).map { AgentLimitSupport.current($0, at: now) }
-        let session = all.filter { $0.kind == .session }.max { $0.usedPercent < $1.usedPercent }
-        if session == nil, provider == .antigravity, !all.contains(where: { $0.kind == .weekly }) {
-            return Array(all.sorted {
-                $0.usedPercent != $1.usedPercent ? $0.usedPercent > $1.usedPercent : $0.id < $1.id
-            }.prefix(2))
+        if provider == .antigravity {
+            return NotchAgentSupport.antigravityCardWindows(all)
         }
+        let session = all.filter { $0.kind == .session }.max { $0.usedPercent < $1.usedPercent }
         let longer = all.filter { $0.kind != .session }.max { $0.usedPercent < $1.usedPercent }
         return [session, longer].compactMap { $0 }
     }
@@ -309,6 +307,19 @@ private struct NotchAgentLimitsCard: View {
                             }
                         } else {
                             if let plan = snapshot.plans[provider] { NotchAgentChip(text: plan.name, tint: provider.tint) }
+                            if provider == .antigravity {
+                                if service.antigravityAccountChecking {
+                                    ProgressView().controlSize(.mini).scaleEffect(0.65).frame(width: 12, height: 12)
+                                } else {
+                                    let checkLabel = FeatureStrings.codexAccounts(L10n.shared.language).check
+                                    Button(action: service.checkAntigravityAccount) {
+                                        Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help(checkLabel)
+                                    .accessibilityLabel(checkLabel)
+                                }
+                            }
                             if !snapshot.working(provider).isEmpty { NotchAgentPulse(tint: provider.tint, size: 5) }
                         }
                     }
@@ -449,13 +460,35 @@ private struct NotchAgentLimitsCard: View {
                 lastUsed
             }
         } else if provider == .antigravity {
-            if let todayUsage = snapshot.usage(.today).byProvider[.antigravity] {
-                if todayUsage.tokens.total > 0 {
-                    todaySummary(todayUsage)
-                } else {
-                    setUpLimits
-                    lastUsed
+            let planName = snapshot.plans[.antigravity]?.name.lowercased()
+            let supportsSessionWindow = planName != "free" && planName != "plus"
+            if supportsSessionWindow, let block = snapshot.antigravityBlock {
+                let length = block.end.timeIntervalSince(block.start)
+                let blockCost = block.totals.unpriced > 0
+                    ? (block.totals.cost > 0 ? "≥ " + AgentFormat.cost(block.totals.cost) : AgentFormat.tokens(block.totals.tokens.total))
+                    : AgentFormat.cost(block.totals.cost)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(text.session)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.85))
+                        Label(countdown(to: block.end), systemImage: "arrow.clockwise")
+                            .labelStyle(NotchAgentInlineLabel())
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 2)
+                        Text(blockCost)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                    }
+                    NotchAgentMeter(value: length > 0 ? now.timeIntervalSince(block.start) / length : 0,
+                                    tint: provider.tint, height: 4, dimmed: true)
                 }
+                .help(text.estimated)
+                if service.antigravityAccountFailure != nil { setUpLimits }
+            } else if let todayUsage = snapshot.usage(.today).byProvider[.antigravity], todayUsage.tokens.total > 0 {
+                todaySummary(todayUsage)
+                if service.antigravityAccountFailure != nil { setUpLimits }
             } else if service.antigravityAccountFailure != nil {
                 setUpLimits
                 lastUsed

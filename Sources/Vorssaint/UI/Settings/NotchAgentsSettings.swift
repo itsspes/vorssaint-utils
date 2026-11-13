@@ -14,6 +14,7 @@ struct NotchAgentsSettingsControls: View {
     @AppStorage(DefaultsKey.notchAgentsOpenCode) private var opencode = true
     @AppStorage(DefaultsKey.notchAgentsCopilot) private var copilot = true
     @AppStorage(DefaultsKey.notchAgentsAntigravity) private var antigravity = true
+    @AppStorage(DefaultsKey.notchAgentsAntigravityPlan) private var antigravityPlan = ""
     @AppStorage(DefaultsKey.notchAgentsGemini) private var gemini = true
     @AppStorage(DefaultsKey.notchAgentsCardOrder) private var cardOrder = ""
     @AppStorage(DefaultsKey.notchAgentsHiddenCards) private var hiddenCards = ""
@@ -32,8 +33,10 @@ struct NotchAgentsSettingsControls: View {
     @State private var claudeApp: URL?
     /// Read from the file while the section is off and the service is idle.
     @State private var claudeAppFileCheck: Date?
+    @State private var copiedAntigravityInstall = false
 
     private var text: NotchAgentStrings { FeatureStrings.notchAgents(l10n.language) }
+    private var antigravityPlanText: AntigravityPlanStrings { FeatureStrings.antigravityPlan(l10n.language) }
     private var locale: Locale { l10n.language.formattingLocale() }
 
     private var orderedCards: [NotchAgentCard] {
@@ -159,6 +162,16 @@ struct NotchAgentsSettingsControls: View {
                     antigravityLimitsStatus(now: context.date)
                 }
                 if usage.antigravityAccountChecking { ProgressView().controlSize(.small) }
+                SettingsRow(symbol: "sparkles", title: antigravityPlanText.plan, caption: antigravityPlanText.planHint) {
+                    Picker(antigravityPlanText.plan, selection: $antigravityPlan) {
+                        ForEach(AntigravityPlanChoice.allCases) { choice in
+                            Text(choice.label(automaticLabel: antigravityPlanText.automatic)).tag(choice.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
                 Text(text.antigravityLimitsPrivacy).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -179,7 +192,7 @@ struct NotchAgentsSettingsControls: View {
         // Cards and agents set the page's height, and the live reading the
         // closed island's width, which the island follows.
         .onChange(of: [cardOrder, hiddenCards, String(claude), String(codex), String(opencode), String(copilot),
-                       String(antigravity), String(gemini), String(liveActivity), readout, limitDisplay, limitFocus]) { _, _ in
+                       String(antigravity), antigravityPlan, String(gemini), String(liveActivity), readout, limitDisplay, limitFocus]) { _, _ in
             NotchService.shared.syncWithPreferences()
         }
     }
@@ -244,12 +257,29 @@ struct NotchAgentsSettingsControls: View {
                 Image(systemName: fresh ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                     .foregroundStyle(fresh ? .green : .orange)
                 explained(failure) { Text("Antigravity CLI · " + text.updated(relative(account, now: now))) }
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
+                Button(FeatureStrings.codexAccounts(l10n.language).check) {
+                    usage.checkAntigravityAccount()
+                }
+                .disabled(usage.antigravityAccountChecking)
             } else if let failure {
                 Image(systemName: usage.antigravityAccountFailure == .missing ? "info.circle.fill" : "exclamationmark.circle.fill")
                     .foregroundStyle(usage.antigravityAccountFailure == .missing ? Color.secondary : Color.orange)
                 Text(failure)
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
+                if usage.antigravityAccountFailure == .missing {
+                    Button(copiedAntigravityInstall ? antigravityPlanText.copied : antigravityPlanText.copyInstall) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(NotchAgentSupport.antigravityInstallCommand, forType: .string)
+                        copiedAntigravityInstall = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedAntigravityInstall = false }
+                    }
+                } else {
+                    Button(FeatureStrings.codexAccounts(l10n.language).check) {
+                        usage.checkAntigravityAccount()
+                    }
+                    .disabled(usage.antigravityAccountChecking)
+                }
             } else {
                 Image(systemName: "info.circle.fill").foregroundStyle(.secondary)
                 Text(text.waitingForLimits)

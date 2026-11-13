@@ -95,6 +95,7 @@ struct AgentUsageSnapshot: Equatable {
     var plans: [AgentProvider: AgentPlan] = [:]
     var live: [AgentLiveSession] = []
     var claudeBlock: AgentBlock?
+    var antigravityBlock: AgentBlock?
     /// The last half hour, scaled to an hour.
     var burnRate: [AgentProvider: AgentTotals] = [:]
     var lastActivity: [AgentProvider: Date] = [:]
@@ -134,6 +135,7 @@ enum AgentUsageSummary {
         var models: [AgentPeriod: [String: AgentShare]] = [:]
         var projects: [AgentPeriod: [String: AgentShare]] = [:]
         var claude: [AgentUsageRecord] = []
+        var antigravity: [AgentUsageRecord] = []
         var names: [String: String] = [:]
         let recent = now.addingTimeInterval(-burnWindow)
         let lastDay = starts.count - 1
@@ -143,6 +145,9 @@ enum AgentUsageSummary {
             snapshot.lastActivity[record.provider] = max(snapshot.lastActivity[record.provider] ?? .distantPast, record.date)
             if record.provider == .claude, record.date > now.addingTimeInterval(-blockHistory), record.date <= now {
                 claude.append(record)
+            }
+            if record.provider == .antigravity, record.date > now.addingTimeInterval(-blockHistory), record.date <= now {
+                antigravity.append(record)
             }
             if record.date >= recent, record.date <= now {
                 snapshot.burnRate[record.provider, default: AgentTotals()].add(record)
@@ -199,6 +204,7 @@ enum AgentUsageSummary {
         snapshot.days = days
         snapshot.hours = hours
         snapshot.claudeBlock = currentBlock(claude, now: now)
+        snapshot.antigravityBlock = currentBlock(antigravity, now: now)
         return snapshot
     }
 
@@ -207,7 +213,8 @@ enum AgentUsageSummary {
     /// moves every total. The rest changes only with what the logs say.
     static func movesWithClock(_ snapshot: AgentUsageSnapshot, now: Date,
                                calendar: Calendar = .autoupdatingCurrent) -> Bool {
-        !snapshot.burnRate.isEmpty || snapshot.claudeBlock != nil || !calendar.isDate(snapshot.now, inSameDayAs: now)
+        !snapshot.burnRate.isEmpty || snapshot.claudeBlock != nil || snapshot.antigravityBlock != nil
+            || !calendar.isDate(snapshot.now, inSameDayAs: now)
     }
 
     static func sorted(_ shares: [AgentShare], byCost: Bool) -> [AgentShare] {
@@ -332,12 +339,14 @@ final class AgentUsageSummaryCache {
         result.seen.formUnion(result.limits.keys)
         result.seen.formUnion(result.live.map(\.provider))
         var claude: [AgentUsageRecord] = []
+        var antigravity: [AgentUsageRecord] = []
         // Stable store order also preserves the original accumulation order.
         for position in recentPositions.sorted() {
             let record = records[position]
             guard isRecent(record, now: now) else { recentPositions.remove(position); continue }
             guard record.date <= now else { continue }
             if record.provider == .claude { claude.append(record) }
+            if record.provider == .antigravity { antigravity.append(record) }
             if record.date >= now.addingTimeInterval(-AgentUsageSummary.burnWindow) {
                 result.burnRate[record.provider, default: AgentTotals()].add(record)
             }
@@ -350,12 +359,13 @@ final class AgentUsageSummaryCache {
             result.burnRate[provider]!.savings *= 2
         }
         result.claudeBlock = AgentUsageSummary.currentBlock(claude, now: now)
+        result.antigravityBlock = AgentUsageSummary.currentBlock(antigravity, now: now)
         return result
     }
 
     private func isRecent(_ record: AgentUsageRecord, now: Date) -> Bool {
         guard providers.contains(record.provider) else { return false }
-        return record.provider == .claude
+        return (record.provider == .claude || record.provider == .antigravity)
             ? record.date > now.addingTimeInterval(-AgentUsageSummary.blockHistory)
             : record.date >= now.addingTimeInterval(-AgentUsageSummary.burnWindow)
     }

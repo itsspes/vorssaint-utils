@@ -925,6 +925,9 @@ enum DefaultsKey {
     static let notchAgentsOpenCode = "notchAgentsOpenCode"
     static let notchAgentsCopilot = "notchAgentsCopilot"
     static let notchAgentsAntigravity = "notchAgentsAntigravity"
+    static let notchAgentsAntigravityPlan = "notchAgentsAntigravityPlan"
+    /// The plan name the Antigravity CLI last reported in `/usage`.
+    static let agentAntigravityDetectedPlan = "AgentAntigravityDetectedPlan"
     static let notchAgentsGemini = "notchAgentsGemini"
     static let notchAgentsCardOrder = "notchAgentsCardOrder"
     static let notchAgentsHiddenCards = "notchAgentsHiddenCards"
@@ -1535,6 +1538,7 @@ enum Defaults {
         DefaultsKey.notchAgentsOpenCode: true,
         DefaultsKey.notchAgentsCopilot: true,
         DefaultsKey.notchAgentsAntigravity: true,
+        DefaultsKey.notchAgentsAntigravityPlan: "",
         DefaultsKey.notchAgentsGemini: true,
         DefaultsKey.notchAgentsCardOrder: "",
         DefaultsKey.notchAgentsHiddenCards: "",

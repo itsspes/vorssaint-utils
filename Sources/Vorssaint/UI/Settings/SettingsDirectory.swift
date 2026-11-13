@@ -246,6 +246,7 @@ enum SettingsDirectory {
         let notchMusic = FeatureStrings.notchMusicExtras(language)
         let notchCalendar = FeatureStrings.notchCalendar(language)
         let notchAgents = FeatureStrings.notchAgents(language)
+        let antigravityPlan = FeatureStrings.antigravityPlan(language)
         let notchLowBattery = NotchLowBatteryStrings.localized(language)
         var liquidGlass: [String] = []
 #if compiler(>=6.2)
@@ -287,6 +288,8 @@ enum SettingsDirectory {
             .init([notchAgents.title, "Claude", "Codex", "OpenCode", "GitHub Copilot", "Antigravity", "agy", "Gemini", "AI", "tokens", notchAgents.resetsCard,
                    notchAgents.limitsAs, notchAgents.limitFocus, notchAgents.liveActivity, notchAgents.finishAlert,
                    notchAgents.limitAlert, notchAgents.budget, notchAgents.priceUpdates], feature: .notchAgents, notch: .module(.agents)),
+            .init([antigravityPlan.plan, "Google AI", "Plus", "Pro", "Ultra"], feature: .notchAgents, notch: .module(.agents),
+                  when: state.on(DefaultsKey.notchAgentsAntigravity)),
             .init([notchAgents.readout], feature: .notchAgents, notch: .module(.agents), when: state.on(DefaultsKey.notchAgentsLiveActivity)),
             .init([notchAgents.finishAfter], feature: .notchAgents, notch: .module(.agents), when: state.on(DefaultsKey.notchAgentsFinishAlert)),
             .init([notchAgents.limitAt], feature: .notchAgents, notch: .module(.agents), when: state.on(DefaultsKey.notchAgentsLimitAlert)),

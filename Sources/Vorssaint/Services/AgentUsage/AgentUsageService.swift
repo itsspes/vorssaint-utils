@@ -115,6 +115,7 @@ final class AgentUsageService: ObservableObject {
     private var claudeAppSamples: [AgentClaudeAppUsage.Sample] = []
     private var claudeAccountLimits: AgentLimits?
     private var antigravityAccountLimits: AgentLimits?
+    private var antigravityDetectedPlan = UserDefaults.standard.string(forKey: DefaultsKey.agentAntigravityDetectedPlan)
     private var shippedPrices: AgentPriceList?
     private var previousLimits: [AgentProvider: AgentLimits] = [:]
     /// Warned windows, each waiting for its renewal.
@@ -156,6 +157,15 @@ final class AgentUsageService: ObservableObject {
         syncPrices()
         refreshClaudeLimits()
         refreshAntigravityLimits()
+        queue.async { [self] in
+            guard readerSession >= 0 else { return }
+            let current = AgentPlans.antigravity(
+                configured: UserDefaults.standard.string(forKey: DefaultsKey.notchAgentsAntigravityPlan),
+                detected: effectiveAntigravityDetectedPlan)
+            if published.plans[.antigravity] != current {
+                publish()
+            }
+        }
     }
 
     /// Stops reading while the island is away, as with the display asleep or
@@ -247,6 +257,7 @@ final class AgentUsageService: ObservableObject {
             claudeAppSamples = []
             claudeAccountLimits = nil
             antigravityAccountLimits = nil
+            antigravityDetectedPlan = nil
             savedMark = nil
             lastSave = .distantPast
         }
@@ -290,6 +301,13 @@ final class AgentUsageService: ObservableObject {
         guard running, !paused, claudeAccountRequest == nil else { return }
         claudeAccountAttempted = .distantPast
         refreshClaudeLimits(pageShows: true)
+    }
+
+    /// A deliberate retry after installing or signing in to the Antigravity CLI.
+    func checkAntigravityAccount() {
+        guard running, !paused, antigravityAccountRequest == nil else { return }
+        antigravityAccountAttempted = .distantPast
+        refreshAntigravityLimits(pageShows: true)
     }
 
     // MARK: Reading
@@ -648,13 +666,22 @@ final class AgentUsageService: ObservableObject {
         let claudeOrganization: String?
         let claudeIdentity: ClaudeAccountProfile.Identity?
         let claudeApp: [AgentClaudeAppUsage.Sample]
+        let antigravityPlan: AgentPlan?
+    }
+
+    /// Runs on `queue`.
+    private var effectiveAntigravityDetectedPlan: String? {
+        antigravityDetectedPlan ?? UserDefaults.standard.string(forKey: DefaultsKey.agentAntigravityDetectedPlan)
     }
 
     /// Runs on `queue`.
     private var inputs: Inputs {
         Inputs(records: store.records.count, turns: store.turns, limits: store.limits, codexPlan: store.codexPlan,
                claudePlan: claudePlan, claudeOrganization: claudeOrganization, claudeIdentity: claudeIdentity,
-               claudeApp: claudeAppSamples)
+               claudeApp: claudeAppSamples,
+               antigravityPlan: AgentPlans.antigravity(
+                   configured: UserDefaults.standard.string(forKey: DefaultsKey.notchAgentsAntigravityPlan),
+                   detected: effectiveAntigravityDetectedPlan))
     }
 
     /// Runs on `queue` and hands the finished snapshot to the main thread.
@@ -664,6 +691,11 @@ final class AgentUsageService: ObservableObject {
         var plans: [AgentProvider: AgentPlan] = [:]
         if let claudePlan { plans[.claude] = claudePlan }
         if let codex = AgentPlans.codex(planType: store.codexPlan) { plans[.codex] = codex }
+        if let antigravity = AgentPlans.antigravity(
+            configured: UserDefaults.standard.string(forKey: DefaultsKey.notchAgentsAntigravityPlan),
+            detected: effectiveAntigravityDetectedPlan) {
+            plans[.antigravity] = antigravity
+        }
         let next = store.snapshot(plans: plans, providers: enabled, now: Date())
         published = next
         checkBudget(next)
@@ -921,6 +953,8 @@ final class AgentUsageService: ObservableObject {
         antigravityAccountRequest = request
         let session = self.session
         let home = self.home
+        let configuredPlan = UserDefaults.standard.string(forKey: DefaultsKey.notchAgentsAntigravityPlan)
+            .flatMap { $0.isEmpty ? nil : $0 }
         antigravityAccountQueue.async { [weak self] in
             let result: Result<AgentAntigravityServer.Summary, AgentAntigravityServer.Failure>
             if let executable = AgentAntigravityServer.executable(
@@ -945,6 +979,10 @@ final class AgentUsageService: ObservableObject {
                     self.queue.async {
                         guard self.readerSession == session, self.enabled.contains(.antigravity) else { return }
                         self.antigravityAccountLimits = summary.limits
+                        if configuredPlan == nil, let tier = summary.planTier {
+                            self.antigravityDetectedPlan = tier
+                            UserDefaults.standard.set(tier, forKey: DefaultsKey.agentAntigravityDetectedPlan)
+                        }
                         self.readAntigravityLimits(now: Date())
                         self.checkLimits()
                         self.schedulePublish()
@@ -967,8 +1005,11 @@ final class AgentUsageService: ObservableObject {
         let shown = pageVisible || pageShows
         guard running, !paused, online, providers.contains(.antigravity), antigravityAccountRequest == nil,
               NotchAgentSupport.limitsInUse(pageShown: shown) else { return false }
+        let active = !snapshot.working(.antigravity).isEmpty
+            || (snapshot.lastActivity[.antigravity].map { now.timeIntervalSince($0) < 10 * 60 } ?? false)
         return now.timeIntervalSince(antigravityAccountAttempted) >= AgentAntigravityServer.interval(
-            after: antigravityAccountFailure, repeated: antigravityAccountUnreachable, pageVisible: pageVisible)
+            after: antigravityAccountFailure, repeated: antigravityAccountUnreachable,
+            pageVisible: shown, active: active)
     }
 
     /// Main thread.

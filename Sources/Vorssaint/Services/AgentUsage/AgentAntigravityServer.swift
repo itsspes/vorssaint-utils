@@ -15,6 +15,7 @@ enum AgentAntigravityServer {
 
     struct Summary: Equatable {
         let limits: AgentLimits
+        var planTier: String? = nil
     }
 
     static let timeout: TimeInterval = 25
@@ -50,9 +51,12 @@ enum AgentAntigravityServer {
     private static let versionLock = NSLock()
     private static var versionCache: [VersionKey: Result<Void, Failure>] = [:]
 
-    static func interval(after failure: Failure?, repeated: Int = 0, pageVisible: Bool) -> TimeInterval {
+    static func interval(after failure: Failure?, repeated: Int = 0,
+                         pageVisible: Bool, active: Bool = true) -> TimeInterval {
         switch failure {
-        case nil: return pageVisible ? freshness : backgroundFreshness
+        case nil:
+            if pageVisible { return freshness }
+            return active ? backgroundFreshness : settledRetry
         case .unreachable?: return min(settledRetry, retryAfter * Double(1 << min(3, max(0, repeated - 1))))
         case .missing?, .needsSignIn?, .outdated?: return settledRetry
         }
@@ -166,6 +170,37 @@ enum AgentAntigravityServer {
                   let json = (try? JSONSerialization.jsonObject(with: Data(slice))) as? [String: Any] else { continue }
             if let status = json["status"] as? String, status != "SUCCESS" { return nil }
             if let parsed = limits(json, observed: observed) { return parsed }
+        }
+        return nil
+    }
+
+    static func planTier(_ data: Data) -> String? {
+        if let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let tier = planTier(json) {
+            return tier
+        }
+        let lines = data.split(separator: 0x0A)
+        for slice in lines.reversed() {
+            guard slice.first(where: { ![9, 10, 13, 32].contains($0) }) == 0x7B,
+                  let json = (try? JSONSerialization.jsonObject(with: Data(slice))) as? [String: Any] else { continue }
+            if let status = json["status"] as? String, status != "SUCCESS" { return nil }
+            if let tier = planTier(json) { return tier }
+        }
+        return nil
+    }
+
+    static func planTier(_ json: [String: Any]) -> String? {
+        if let status = json["status"] as? String, status != "SUCCESS" { return nil }
+        let command = json["command"] as? [String: Any]
+        let dataObj = command?["data"] as? [String: Any]
+        for source in [dataObj, json] {
+            guard let source else { continue }
+            for key in ["plan_tier", "planTier", "subscription_tier", "subscriptionTier", "tier", "plan"] {
+                if let raw = (source[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !raw.isEmpty, raw.count <= 48 {
+                    return raw
+                }
+            }
         }
         return nil
     }
@@ -374,7 +409,7 @@ enum AgentAntigravityServer {
             guard !usage.cancelled, !usage.timedOut else { return .failure(.unreachable) }
 
             if usage.status == 0, let limits = AgentAntigravityServer.limits(usage.stdout, observed: Date()) {
-                return .success(Summary(limits: limits))
+                return .success(Summary(limits: limits, planTier: AgentAntigravityServer.planTier(usage.stdout)))
             }
 
             let diagnostics = Self.diagnosticText(stdout: usage.stdout, stderr: usage.stderr)
@@ -385,7 +420,7 @@ enum AgentAntigravityServer {
                 return .failure(.needsSignIn)
             }
             if let limits = AgentAntigravityServer.limits(usage.stdout, observed: Date()) {
-                return .success(Summary(limits: limits))
+                return .success(Summary(limits: limits, planTier: AgentAntigravityServer.planTier(usage.stdout)))
             }
             return .failure(.unreachable)
         }

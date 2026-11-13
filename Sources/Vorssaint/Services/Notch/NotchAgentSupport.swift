@@ -52,6 +52,36 @@ enum NotchAgentLimitFocus: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Optional Google AI subscription override for Antigravity when the CLI does
+/// not report a plan tier or is not installed.
+enum AntigravityPlanChoice: String, CaseIterable, Identifiable {
+    case automatic = ""
+    case free = "free"
+    case plus = "plus"
+    case pro = "pro"
+    case ultra5x = "ultra_5x"
+    case ultra20x = "ultra_20x"
+    case ultra = "ultra"
+    case workspace = "workspace"
+    case enterprise = "enterprise"
+
+    var id: String { rawValue }
+
+    func label(automaticLabel: String) -> String {
+        switch self {
+        case .automatic: return automaticLabel
+        case .free: return "Free"
+        case .plus: return "Plus"
+        case .pro: return "Pro"
+        case .ultra5x: return "Ultra 5×"
+        case .ultra20x: return "Ultra 20×"
+        case .ultra: return "Ultra"
+        case .workspace: return "Workspace"
+        case .enterprise: return "Enterprise"
+        }
+    }
+}
+
 struct NotchAgentTile: Identifiable, Equatable {
     let card: NotchAgentCard
     /// The account a limits card belongs to.
@@ -71,6 +101,47 @@ enum NotchAgentSupport {
     static let budgets = [0.0, 5, 10, 25, 50, 100, 250]
     /// A turn silent for this long is not shown as working.
     static let idleTurn: TimeInterval = 10 * 60
+    static let antigravityInstallCommand = "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+
+    static func antigravityPlanChoice(in defaults: UserDefaults = .standard) -> AntigravityPlanChoice {
+        AntigravityPlanChoice(rawValue: defaults.string(forKey: DefaultsKey.notchAgentsAntigravityPlan) ?? "")
+            ?? .automatic
+    }
+
+    /// Pairs the session and longer window from Antigravity's most constrained
+    /// model group, preferring Gemini when groups are tied (such as 0% used),
+    /// so the two rows on the Limits card never mix unrelated model pools.
+    static func antigravityCardWindows(_ all: [AgentLimitWindow]) -> [AgentLimitWindow] {
+        guard !all.isEmpty else { return [] }
+        let hasSession = all.contains { $0.kind == .session }
+        let hasLonger = all.contains { $0.kind != .session }
+        if !hasSession || !hasLonger {
+            if !hasSession && !all.contains(where: { $0.kind == .weekly }) {
+                return Array(all.sorted {
+                    $0.usedPercent != $1.usedPercent ? $0.usedPercent > $1.usedPercent : $0.id < $1.id
+                }.prefix(2))
+            }
+            if hasSession && !hasLonger {
+                return Array(all.sorted {
+                    $0.usedPercent != $1.usedPercent ? $0.usedPercent > $1.usedPercent : $0.id < $1.id
+                }.prefix(2))
+            }
+        }
+        let grouped = Dictionary(grouping: all, by: \.scope)
+        let primaryScope = grouped.max { lhs, rhs in
+            let leftPeak = lhs.value.map(\.usedPercent).max() ?? 0
+            let rightPeak = rhs.value.map(\.usedPercent).max() ?? 0
+            if leftPeak != rightPeak { return leftPeak < rightPeak }
+            if (lhs.key == nil) != (rhs.key == nil) { return rhs.key == nil }
+            return (lhs.key ?? "") > (rhs.key ?? "")
+        }?.key
+        let inGroup = grouped[primaryScope] ?? all
+        let session = inGroup.filter { $0.kind == .session }.max { $0.usedPercent < $1.usedPercent }
+            ?? all.filter { $0.kind == .session }.max { $0.usedPercent < $1.usedPercent }
+        let longer = inGroup.filter { $0.kind != .session }.max { $0.usedPercent < $1.usedPercent }
+            ?? all.filter { $0.kind != .session }.max { $0.usedPercent < $1.usedPercent }
+        return [session, longer].compactMap { $0 }
+    }
 
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
         NotchSupport.isEnabled(in: defaults) && sectionShows(in: defaults)
